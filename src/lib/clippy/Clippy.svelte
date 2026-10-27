@@ -112,6 +112,7 @@
 <style>
   .sprite {
     position: relative;
+    flex-shrink: 0;
     cursor: grab;
   }
   .fallback {

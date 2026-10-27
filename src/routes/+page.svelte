@@ -289,6 +289,7 @@
     padding: 8px 12px 10px;
     font: 13px/1.3 Tahoma, Verdana, sans-serif;
     width: 236px;
+    flex-shrink: 0;
     box-sizing: border-box;
   }
   .topbar {
