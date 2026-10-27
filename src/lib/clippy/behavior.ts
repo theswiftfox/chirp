@@ -37,11 +37,16 @@ const IDLE_RE = /^(Idle|Look|Blink|Gesture)/;
 const SEQUEL_RE = /(Return|Continued)$/;
 const RARE_RE = /snooze|sleep|DeepIdle|ToGround|AgainstWall/i;
 
+const MIN_HOLD_MS = 1500;
+
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const pick = <T>(xs: T[]) => xs[Math.floor(Math.random() * xs.length)];
 
 export class Behavior {
   private gen = 0;
+  private current?: Mood;
+  private since = 0;
+  private timer?: ReturnType<typeof setTimeout>;
   private chain: Promise<void> = Promise.resolve();
   private idles: string[];
   private rareIdles: string[];
@@ -53,6 +58,30 @@ export class Behavior {
   }
 
   setMood(mood: Mood) {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
+
+    // Rapid flips between activity moods (thinking <-> writing <-> tools) look jittery,
+    // so hold the current animation for a minimum time and only apply the latest request.
+    if (this.current && mood in LOOPING && this.current in LOOPING && mood !== this.current) {
+      const wait = MIN_HOLD_MS - (Date.now() - this.since);
+      if (wait > 0) {
+        this.timer = setTimeout(() => {
+          this.timer = undefined;
+          this.apply(mood);
+        }, wait);
+        return;
+      }
+    }
+    this.apply(mood);
+  }
+
+  private apply(mood: Mood) {
+    if (mood === this.current) return;
+    this.current = mood;
+    this.since = Date.now();
     const gen = ++this.gen;
     this.player.exit();
     this.chain = this.chain.then(() => this.run(mood, gen));
@@ -60,6 +89,8 @@ export class Behavior {
 
   /** Stop all activity for good (component unmount / hot reload / character change). */
   dispose() {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
     this.gen++;
     this.player.exit(0);
   }

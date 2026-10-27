@@ -37,6 +37,8 @@ fn open_window(app: &tauri::AppHandle, label: &str, title: &str, w: f64, h: f64)
         .min_inner_size(360.0, 300.0)
         .build()
         .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "linux")]
+    appicon::set_window_icons(app);
     Ok(())
 }
 

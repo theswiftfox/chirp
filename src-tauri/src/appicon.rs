@@ -56,7 +56,12 @@ pub fn apply(app: &AppHandle) {
 
     if let Some(handle) = app.try_state::<TrayHandle>() {
         if let Some(icon) = handle.0.lock().unwrap().as_ref() {
-            if let Ok(image) = tauri::image::Image::from_bytes(&tray) {
+            // Linux has no template icons, so the monochrome paperclip would stay black.
+            #[cfg(target_os = "linux")]
+            let image = if template { whiten(&tray) } else { tauri::image::Image::from_bytes(&tray).ok() };
+            #[cfg(not(target_os = "linux"))]
+            let image = tauri::image::Image::from_bytes(&tray).ok();
+            if let Some(image) = image {
                 let _ = icon.set_icon(Some(image));
                 let _ = icon.set_icon_as_template(template);
             }
@@ -66,8 +71,52 @@ pub fn apply(app: &AppHandle) {
     {
         let _ = app.run_on_main_thread(move || set_dock_icon(&dock));
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        let _ = DOCK_PNG.set_bytes(dock);
+        set_window_icons(app);
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let _ = dock;
+}
+
+#[cfg(target_os = "linux")]
+static DOCK_PNG: DockPng = DockPng(Mutex::new(Vec::new()));
+
+#[cfg(target_os = "linux")]
+struct DockPng(Mutex<Vec<u8>>);
+
+#[cfg(target_os = "linux")]
+impl DockPng {
+    fn set_bytes(&self, bytes: Vec<u8>) -> Result<(), ()> {
+        *self.0.lock().map_err(|_| ())? = bytes;
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn whiten(png: &[u8]) -> Option<tauri::image::Image<'static>> {
+    let img = image::load_from_memory(png).ok()?.to_rgba8();
+    let (w, h) = img.dimensions();
+    let mut raw = img.into_raw();
+    for px in raw.chunks_exact_mut(4) {
+        px[0] = 255;
+        px[1] = 255;
+        px[2] = 255;
+    }
+    Some(tauri::image::Image::new_owned(raw, w, h))
+}
+
+/// Give every window the app icon; on Linux the taskbar/dock shows the window icon.
+#[cfg(target_os = "linux")]
+pub fn set_window_icons(app: &AppHandle) {
+    let bytes = DOCK_PNG.0.lock().map(|b| b.clone()).unwrap_or_default();
+    let bytes = if bytes.is_empty() { PAPERCLIP_DOCK.to_vec() } else { bytes };
+    if let Ok(image) = tauri::image::Image::from_bytes(&bytes) {
+        for (_, win) in app.webview_windows() {
+            let _ = win.set_icon(image.clone());
+        }
+    }
 }
 
 /// Go back to the paperclip (used when the classic characters are removed).
