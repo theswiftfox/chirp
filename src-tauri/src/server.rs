@@ -42,7 +42,11 @@ pub fn open_in_terminal(
     session_id: &str,
     terminal: Option<&str>,
 ) -> Result<(), String> {
-    if session_id.is_empty() || !session_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+    if session_id.is_empty()
+        || !session_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
         return Err("invalid session id".into());
     }
     if !std::path::Path::new(directory).is_dir() {
@@ -76,7 +80,11 @@ pub fn open_in_terminal(
 
         let script = format!(
             "#!{shell}\nrm -f -- \"$0\"\ncd {dir} || exit 1\nexport PATH={bin_dir}:\"$PATH\"\nexport OPENCODE_SERVER_PASSWORD={pw}\nexec {bin} --server {url} --session {sid}\n",
-            shell = if cfg!(target_os = "macos") { "/bin/zsh -l" } else { "/bin/sh" },
+            shell = if cfg!(target_os = "macos") {
+                "/bin/zsh -l"
+            } else {
+                "/bin/sh"
+            },
             dir = sh_quote(directory),
             bin_dir = sh_quote(&bin_dir.to_string_lossy()),
             pw = sh_quote(&info.password),
@@ -84,10 +92,15 @@ pub fn open_in_terminal(
             url = sh_quote(&info.url),
             sid = sh_quote(session_id),
         );
-        let ext = if cfg!(target_os = "macos") { "command" } else { "sh" };
+        let ext = if cfg!(target_os = "macos") {
+            "command"
+        } else {
+            "sh"
+        };
         let path = dir.join(format!("handover-{session_id}.{ext}"));
         std::fs::write(&path, script).map_err(|e| e.to_string())?;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| e.to_string())?;
 
         let result = launch_terminal(&path, terminal);
         if result.is_err() {
@@ -110,7 +123,11 @@ fn launch_terminal(script: &std::path::Path, terminal: Option<&str>) -> Result<(
         cmd.args(["-a", app_name]);
     }
     let status = cmd.arg(script).status().map_err(|e| e.to_string())?;
-    if status.success() { Ok(()) } else { Err("could not open the terminal app".into()) }
+    if status.success() {
+        Ok(())
+    } else {
+        Err("could not open the terminal app".into())
+    }
 }
 
 /// How a terminal emulator wants the program to run: the arguments that go before the script.
@@ -203,7 +220,10 @@ fn launch_terminal(script: &std::path::Path, terminal: Option<&str>) -> Result<(
     if let Some(t) = terminal {
         candidates.push(t.to_string());
     } else {
-        if let Some(t) = std::env::var("TERMINAL").ok().filter(|t| !t.trim().is_empty()) {
+        if let Some(t) = std::env::var("TERMINAL")
+            .ok()
+            .filter(|t| !t.trim().is_empty())
+        {
             candidates.push(t);
         }
         candidates.extend(
@@ -292,7 +312,13 @@ fn start_blocking(app: &AppHandle) -> Result<ServerInfo, String> {
     let password = random_hex(24)?;
 
     let mut child = Command::new(&bin)
-        .args(["serve", "--hostname", "127.0.0.1", "--port", &port.to_string()])
+        .args([
+            "serve",
+            "--hostname",
+            "127.0.0.1",
+            "--port",
+            &port.to_string(),
+        ])
         .env("OPENCODE_SERVER_PASSWORD", &password)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -349,7 +375,9 @@ fn random_hex(bytes: usize) -> Result<String, String> {
 
 /// Kill an opencode server left behind by a previous crashed run.
 fn kill_stale(pid_file: &PathBuf) {
-    let Ok(pid) = std::fs::read_to_string(pid_file) else { return };
+    let Ok(pid) = std::fs::read_to_string(pid_file) else {
+        return;
+    };
     let pid = pid.trim();
     if pid.is_empty() || !pid.chars().all(|c| c.is_ascii_digit()) {
         return;
@@ -378,15 +406,21 @@ pub fn resolve_opencode() -> Result<PathBuf, String> {
             }
         }
     }
-    let mut dirs: Vec<PathBuf> = vec![
-        "/opt/homebrew/bin".into(),
-        "/usr/local/bin".into(),
-    ];
+    let mut dirs: Vec<PathBuf> = vec!["/opt/homebrew/bin".into(), "/usr/local/bin".into()];
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        for rel in [".opencode/bin", ".bun/bin", ".local/bin", ".cargo/bin", ".npm-global/bin"] {
+        for rel in [
+            ".opencode/bin",
+            ".bun/bin",
+            ".local/bin",
+            ".cargo/bin",
+            ".npm-global/bin",
+        ] {
             dirs.push(home.join(rel));
         }
-        for base in [home.join(".local/share/nvm"), home.join(".nvm/versions/node")] {
+        for base in [
+            home.join(".local/share/nvm"),
+            home.join(".nvm/versions/node"),
+        ] {
             if let Ok(rd) = std::fs::read_dir(&base) {
                 let mut vers: Vec<PathBuf> = rd.flatten().map(|e| e.path().join("bin")).collect();
                 vers.sort();

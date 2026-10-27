@@ -23,7 +23,10 @@ pub fn icons_dir(app: &AppHandle) -> Option<PathBuf> {
 
 fn clippy_icons(app: &AppHandle) -> Option<(Vec<u8>, Vec<u8>)> {
     let dir = icons_dir(app)?;
-    Some((std::fs::read(dir.join(CLIPPY_DOCK)).ok()?, std::fs::read(dir.join(CLIPPY_TRAY)).ok()?))
+    Some((
+        std::fs::read(dir.join(CLIPPY_DOCK)).ok()?,
+        std::fs::read(dir.join(CLIPPY_TRAY)).ok()?,
+    ))
 }
 
 fn current_style(app: &AppHandle) -> String {
@@ -38,7 +41,9 @@ fn set_dock_icon(png: &[u8]) {
     use objc2_app_kit::{NSApplication, NSImage};
     use objc2_foundation::{MainThreadMarker, NSData};
 
-    let Some(mtm) = MainThreadMarker::new() else { return };
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
     let data = NSData::with_bytes(png);
     if let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) {
         unsafe { NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&image)) };
@@ -48,17 +53,25 @@ fn set_dock_icon(png: &[u8]) {
 /// Apply the saved icon style to the tray and the Dock. Falls back to the paperclip if the
 /// Clippy icons are not available.
 pub fn apply(app: &AppHandle) {
-    let clippy = if current_style(app) == "clippy" { clippy_icons(app) } else { None };
+    let clippy = if current_style(app) == "clippy" {
+        clippy_icons(app)
+    } else {
+        None
+    };
     let (dock, tray, template) = match clippy {
         Some((dock, tray)) => (dock, tray, false),
         None => (PAPERCLIP_DOCK.to_vec(), PAPERCLIP_TRAY.to_vec(), true),
     };
 
-    if let Some(handle) = app.try_state::<TrayHandle>() {
-        if let Some(icon) = handle.0.lock().unwrap().as_ref() {
+    if let Some(handle) = app.try_state::<TrayHandle>()
+        && let Some(icon) = handle.0.lock().unwrap().as_ref() {
             // Linux has no template icons, so the monochrome paperclip would stay black.
             #[cfg(target_os = "linux")]
-            let image = if template { whiten(&tray) } else { tauri::image::Image::from_bytes(&tray).ok() };
+            let image = if template {
+                whiten(&tray)
+            } else {
+                tauri::image::Image::from_bytes(&tray).ok()
+            };
             #[cfg(not(target_os = "linux"))]
             let image = tauri::image::Image::from_bytes(&tray).ok();
             if let Some(image) = image {
@@ -66,7 +79,6 @@ pub fn apply(app: &AppHandle) {
                 let _ = icon.set_icon_as_template(template);
             }
         }
-    }
     #[cfg(target_os = "macos")]
     {
         let _ = app.run_on_main_thread(move || set_dock_icon(&dock));
@@ -111,7 +123,11 @@ fn whiten(png: &[u8]) -> Option<tauri::image::Image<'static>> {
 #[cfg(target_os = "linux")]
 pub fn set_window_icons(app: &AppHandle) {
     let bytes = DOCK_PNG.0.lock().map(|b| b.clone()).unwrap_or_default();
-    let bytes = if bytes.is_empty() { PAPERCLIP_DOCK.to_vec() } else { bytes };
+    let bytes = if bytes.is_empty() {
+        PAPERCLIP_DOCK.to_vec()
+    } else {
+        bytes
+    };
     if let Ok(image) = tauri::image::Image::from_bytes(&bytes) {
         for (_, win) in app.webview_windows() {
             let _ = win.set_icon(image.clone());
@@ -138,7 +154,14 @@ pub struct IconStatus {
 fn status(app: &AppHandle) -> IconStatus {
     let available = clippy_icons(app).is_some();
     let style = current_style(app);
-    IconStatus { style: if style == "clippy" && !available { "paperclip".into() } else { style }, clippy_available: available }
+    IconStatus {
+        style: if style == "clippy" && !available {
+            "paperclip".into()
+        } else {
+            style
+        },
+        clippy_available: available,
+    }
 }
 
 #[tauri::command]

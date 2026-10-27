@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha512};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -40,7 +40,11 @@ struct Progress {
 }
 
 fn characters_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("characters"))
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("characters"))
 }
 
 fn valid_segment(s: &str) -> bool {
@@ -48,7 +52,8 @@ fn valid_segment(s: &str) -> bool {
         && s.len() <= 64
         && s != "."
         && s != ".."
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 
 /// Metadata of every installed character.
@@ -56,16 +61,17 @@ fn valid_segment(s: &str) -> bool {
 pub async fn list_characters(app: AppHandle) -> Result<Vec<Value>, String> {
     let dir = characters_dir(&app)?;
     let mut out: Vec<Value> = Vec::new();
-    let Ok(entries) = fs::read_dir(&dir) else { return Ok(out) };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Ok(out);
+    };
     for e in entries.flatten() {
         if e.file_name().to_string_lossy().starts_with('.') {
             continue;
         }
-        if let Ok(text) = fs::read_to_string(e.path().join("meta.json")) {
-            if let Ok(v) = serde_json::from_str::<Value>(&text) {
+        if let Ok(text) = fs::read_to_string(e.path().join("meta.json"))
+            && let Ok(v) = serde_json::from_str::<Value>(&text) {
                 out.push(v);
             }
-        }
     }
     out.sort_by_key(|v| v["name"].as_str().unwrap_or("").to_string());
     Ok(out)
@@ -73,7 +79,11 @@ pub async fn list_characters(app: AppHandle) -> Result<Vec<Value>, String> {
 
 /// Raw bytes of one file of an installed character (`agent.json`, `map.png`, `sounds/3.mp3`, ...).
 #[tauri::command]
-pub async fn character_file(app: AppHandle, id: String, path: String) -> Result<tauri::ipc::Response, String> {
+pub async fn character_file(
+    app: AppHandle,
+    id: String,
+    path: String,
+) -> Result<tauri::ipc::Response, String> {
     if !valid_segment(&id) {
         return Err("invalid character id".into());
     }
@@ -93,7 +103,14 @@ pub async fn install_clippy_bundle(app: AppHandle) -> Result<Vec<String>, String
     tauri::async_runtime::spawn_blocking(move || {
         let dest = characters_dir(&app)?;
         let emit = |stage: &'static str, progress: f32, message: String| {
-            let _ = app.emit("bundle-progress", Progress { stage, progress, message });
+            let _ = app.emit(
+                "bundle-progress",
+                Progress {
+                    stage,
+                    progress,
+                    message,
+                },
+            );
         };
         emit("download", 0.0, format!("Downloading {PACKAGE}…"));
         let bytes = download(&|p| emit("download", p, format!("Downloading {PACKAGE}…")))?;
@@ -128,16 +145,22 @@ pub async fn remove_installed_characters(app: AppHandle) -> Result<(), String> {
 /// Cut Clippy's rest pose out of the installed sprite sheet and save it as a Dock icon (512 px,
 /// with margin) and a menu bar icon (64 px) in `out_dir`.
 pub fn make_clippy_icons(char_dir: &Path, out_dir: &Path) -> Result<(), String> {
-    use image::{imageops, RgbaImage};
+    use image::{RgbaImage, imageops};
 
-    let agent: Value = serde_json::from_slice(&fs::read(char_dir.join("agent.json")).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    let agent: Value =
+        serde_json::from_slice(&fs::read(char_dir.join("agent.json")).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
     let num = |v: &Value, d: u32| v.as_u64().map(|n| n as u32).unwrap_or(d);
-    let (w, h) = (num(&agent["framesize"][0], 124), num(&agent["framesize"][1], 93));
+    let (w, h) = (
+        num(&agent["framesize"][0], 124),
+        num(&agent["framesize"][1], 93),
+    );
     let rest = &agent["animations"]["RestPose"]["frames"][0]["images"][0];
     let (x, y) = (num(&rest[0], 0), num(&rest[1], 0));
 
-    let sheet = image::open(char_dir.join("map.png")).map_err(|e| e.to_string())?.to_rgba8();
+    let sheet = image::open(char_dir.join("map.png"))
+        .map_err(|e| e.to_string())?
+        .to_rgba8();
     let frame = imageops::crop_imm(&sheet, x, y, w, h).to_image();
 
     let (mut min_x, mut min_y, mut max_x, mut max_y) = (w, h, 0, 0);
@@ -152,7 +175,8 @@ pub fn make_clippy_icons(char_dir: &Path, out_dir: &Path) -> Result<(), String> 
     if max_x < min_x || max_y < min_y {
         return Err("the rest pose is empty".into());
     }
-    let mut still = imageops::crop_imm(&frame, min_x, min_y, max_x - min_x + 1, max_y - min_y + 1).to_image();
+    let mut still =
+        imageops::crop_imm(&frame, min_x, min_y, max_x - min_x + 1, max_y - min_y + 1).to_image();
     // Resize with premultiplied alpha: the sprite's transparent pixels carry a colour key (magenta) that
     // would otherwise bleed into the edges as a halo.
     for p in still.pixels_mut() {
@@ -171,20 +195,29 @@ pub fn make_clippy_icons(char_dir: &Path, out_dir: &Path) -> Result<(), String> 
         let mut resized = imageops::resize(&still, nw, nh, imageops::FilterType::Lanczos3);
         for p in resized.pixels_mut() {
             let a = p[3] as u32;
-            if a > 0 {
-                for c in 0..3 {
-                    p[c] = ((p[c] as u32 * 255 + a / 2) / a).min(255) as u8;
+            for c in 0..3 {
+                if let Some(value) = (p[c] as u32 * 255 + a / 2).checked_div(a) {
+                    p[c] = value.min(255) as u8;
                 }
             }
         }
         let mut out = RgbaImage::new(canvas, canvas);
-        imageops::overlay(&mut out, &resized, ((canvas - nw) / 2) as i64, ((canvas - nh) / 2) as i64);
+        imageops::overlay(
+            &mut out,
+            &resized,
+            ((canvas - nw) / 2) as i64,
+            ((canvas - nh) / 2) as i64,
+        );
         out
     };
 
     fs::create_dir_all(out_dir).map_err(|e| e.to_string())?;
-    fit(512, 420).save(out_dir.join(crate::appicon::CLIPPY_DOCK)).map_err(|e| e.to_string())?;
-    fit(64, 64).save(out_dir.join(crate::appicon::CLIPPY_TRAY)).map_err(|e| e.to_string())?;
+    fit(512, 420)
+        .save(out_dir.join(crate::appicon::CLIPPY_DOCK))
+        .map_err(|e| e.to_string())?;
+    fit(64, 64)
+        .save(out_dir.join(crate::appicon::CLIPPY_TRAY))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -203,7 +236,9 @@ fn download(progress: &dyn Fn(f32)) -> Result<Vec<u8>, String> {
     let mut chunk = [0u8; 64 * 1024];
     let mut last = 0.0;
     loop {
-        let n = resp.read(&mut chunk).map_err(|e| format!("download failed: {e}"))?;
+        let n = resp
+            .read(&mut chunk)
+            .map_err(|e| format!("download failed: {e}"))?;
         if n == 0 {
             break;
         }
@@ -221,11 +256,16 @@ fn download(progress: &dyn Fn(f32)) -> Result<Vec<u8>, String> {
 
 fn verify_integrity(bytes: &[u8]) -> Result<(), String> {
     let digest = Sha512::digest(bytes);
-    let got = format!("sha512-{}", base64::engine::general_purpose::STANDARD.encode(digest));
+    let got = format!(
+        "sha512-{}",
+        base64::engine::general_purpose::STANDARD.encode(digest)
+    );
     if got == INTEGRITY {
         Ok(())
     } else {
-        Err(format!("integrity check failed for {PACKAGE}: refusing to use it"))
+        Err(format!(
+            "integrity check failed for {PACKAGE}: refusing to use it"
+        ))
     }
 }
 
@@ -242,7 +282,11 @@ pub fn install_from_bytes(
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes));
     for entry in archive.entries().map_err(|e| e.to_string())? {
         let mut entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path().map_err(|e| e.to_string())?.to_string_lossy().to_string();
+        let path = entry
+            .path()
+            .map_err(|e| e.to_string())?
+            .to_string_lossy()
+            .to_string();
         let parts: Vec<&str> = path.split('/').collect();
         if parts.len() == 5
             && parts[..3] == ["package", "dist", "agents"]
@@ -263,7 +307,9 @@ pub fn install_from_bytes(
             continue;
         }
         let get = |f: &str| files.get(&(id.clone(), f.to_string()));
-        let (Some(agent), Some(map), Some(sounds)) = (get("agent.mjs"), get("map.mjs"), get("sounds-mp3.mjs")) else {
+        let (Some(agent), Some(map), Some(sounds)) =
+            (get("agent.mjs"), get("map.mjs"), get("sounds-mp3.mjs"))
+        else {
             continue;
         };
         write_character(dest, id, agent, map, sounds)?;
@@ -285,7 +331,13 @@ pub fn install_from_bytes(
     Ok(installed)
 }
 
-fn write_character(dest: &Path, id: &str, agent_js: &[u8], map_js: &[u8], sounds_js: &[u8]) -> Result<(), String> {
+fn write_character(
+    dest: &Path,
+    id: &str,
+    agent_js: &[u8],
+    map_js: &[u8],
+    sounds_js: &[u8],
+) -> Result<(), String> {
     let png = data_uri_bytes(&String::from_utf8_lossy(map_js))
         .ok_or_else(|| format!("{id}: no sprite sheet in map.mjs"))?;
     if png.len() < 24 || &png[1..4] != b"PNG" {
@@ -296,12 +348,17 @@ fn write_character(dest: &Path, id: &str, agent_js: &[u8], map_js: &[u8], sounds
         u32::from_be_bytes([png[20], png[21], png[22], png[23]]),
     ];
 
-    let mut agent = parse_agent(&String::from_utf8_lossy(agent_js)).map_err(|e| format!("{id}: {e}"))?;
+    let mut agent =
+        parse_agent(&String::from_utf8_lossy(agent_js)).map_err(|e| format!("{id}: {e}"))?;
     let framesize = agent["framesize"].clone();
     let rest = agent["animations"]["RestPose"]["frames"][0]["images"].clone();
     agent["sheet"] = json!(sheet);
 
-    let name = NAMES.iter().find(|(k, _)| *k == id).map(|(_, v)| *v).unwrap_or(id);
+    let name = NAMES
+        .iter()
+        .find(|(k, _)| *k == id)
+        .map(|(_, v)| *v)
+        .unwrap_or(id);
     let meta = json!({
         "id": id,
         "name": name,
@@ -318,7 +375,8 @@ fn write_character(dest: &Path, id: &str, agent_js: &[u8], map_js: &[u8], sounds
     fs::write(tmp.join("meta.json"), meta.to_string()).map_err(|e| e.to_string())?;
     for (key, bytes) in parse_sounds(&String::from_utf8_lossy(sounds_js)) {
         if valid_segment(&key) {
-            fs::write(tmp.join("sounds").join(format!("{key}.mp3")), bytes).map_err(|e| e.to_string())?;
+            fs::write(tmp.join("sounds").join(format!("{key}.mp3")), bytes)
+                .map_err(|e| e.to_string())?;
         }
     }
     let target = dest.join(id);
@@ -333,7 +391,8 @@ fn parse_agent(src: &str) -> Result<Value, String> {
     let (a, b) = (body.find('{'), body.rfind('}'));
     match (a, b) {
         (Some(a), Some(b)) if a < b => {
-            let mut v = json5::from_str::<Value>(&body[a..=b]).map_err(|e| format!("agent.mjs: {e}"))?;
+            let mut v =
+                json5::from_str::<Value>(&body[a..=b]).map_err(|e| format!("agent.mjs: {e}"))?;
             normalize_numbers(&mut v);
             Ok(v)
         }
@@ -345,11 +404,10 @@ fn parse_agent(src: &str) -> Result<Value, String> {
 fn normalize_numbers(v: &mut Value) {
     match v {
         Value::Number(n) => {
-            if let Some(f) = n.as_f64() {
-                if n.is_f64() && f.fract() == 0.0 && f.abs() < 9.0e15 {
+            if let Some(f) = n.as_f64()
+                && n.is_f64() && f.fract() == 0.0 && f.abs() < 9.0e15 {
                     *v = json!(f as i64);
                 }
-            }
         }
         Value::Array(a) => a.iter_mut().for_each(normalize_numbers),
         Value::Object(o) => o.values_mut().for_each(normalize_numbers),
@@ -361,7 +419,9 @@ fn normalize_numbers(v: &mut Value) {
 fn data_uri_bytes(src: &str) -> Option<Vec<u8>> {
     let start = src.find("base64,")? + "base64,".len();
     let end = start + src[start..].find('"')?;
-    base64::engine::general_purpose::STANDARD.decode(&src[start..end]).ok()
+    base64::engine::general_purpose::STANDARD
+        .decode(&src[start..end])
+        .ok()
 }
 
 /// `{ 1: "data:audio/mpeg;base64,...", 2: ... }` (one entry per line) -> [(key, mp3 bytes)].
@@ -370,7 +430,9 @@ fn parse_sounds(src: &str) -> Vec<(String, Vec<u8>)> {
         .filter_map(|line| {
             let (key, rest) = line.split_once(": \"data:audio/mpeg;base64,")?;
             let payload = rest.trim_end().trim_end_matches(',').trim_end_matches('"');
-            let bytes = base64::engine::general_purpose::STANDARD.decode(payload).ok()?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(payload)
+                .ok()?;
             Some((key.trim().trim_matches('"').to_string(), bytes))
         })
         .collect()
@@ -394,11 +456,18 @@ mod tests {
         let ids = install_from_bytes(&bytes, &dest, &|_, _| {}).unwrap();
         assert_eq!(ids.len(), 10, "{ids:?}");
         for id in &ids {
-            let agent: Value = serde_json::from_slice(&fs::read(dest.join(id).join("agent.json")).unwrap()).unwrap();
-            assert!(agent["animations"]["RestPose"].is_object(), "{id}: no RestPose");
+            let agent: Value =
+                serde_json::from_slice(&fs::read(dest.join(id).join("agent.json")).unwrap())
+                    .unwrap();
+            assert!(
+                agent["animations"]["RestPose"].is_object(),
+                "{id}: no RestPose"
+            );
             assert!(agent["framesize"][0].as_u64().unwrap() > 0);
             assert!(agent["sheet"][0].as_u64().unwrap() > 0);
-            let meta: Value = serde_json::from_slice(&fs::read(dest.join(id).join("meta.json")).unwrap()).unwrap();
+            let meta: Value =
+                serde_json::from_slice(&fs::read(dest.join(id).join("meta.json")).unwrap())
+                    .unwrap();
             assert_eq!(meta["id"], *id);
             let declared = agent["sounds"].as_array().map(|a| a.len()).unwrap_or(0);
             let written = fs::read_dir(dest.join(id).join("sounds")).unwrap().count();
@@ -407,11 +476,18 @@ mod tests {
         // Icons derived from the installed Clippy.
         let icons = dest.join("icons-out");
         make_clippy_icons(&dest.join("clippy"), &icons).unwrap();
-        for (file, size) in [(crate::appicon::CLIPPY_DOCK, 512), (crate::appicon::CLIPPY_TRAY, 64)] {
+        for (file, size) in [
+            (crate::appicon::CLIPPY_DOCK, 512),
+            (crate::appicon::CLIPPY_TRAY, 64),
+        ] {
             let img = image::open(icons.join(file)).unwrap().to_rgba8();
             assert_eq!((img.width(), img.height()), (size, size), "{file}");
             assert!(img.pixels().any(|p| p[3] > 200), "{file} is blank");
-            assert_eq!(img.get_pixel(0, 0)[3], 0, "{file}: the corner should be transparent");
+            assert_eq!(
+                img.get_pixel(0, 0)[3],
+                0,
+                "{file}: the corner should be transparent"
+            );
         }
         if let Ok(preview) = std::env::var("CLIPPY_ICON_PREVIEW") {
             let _ = fs::create_dir_all(&preview);
@@ -419,20 +495,31 @@ mod tests {
                 let _ = fs::copy(icons.join(file), Path::new(&preview).join(file));
             }
         }
-        let rocky: Value = serde_json::from_slice(&fs::read(dest.join("rocky/agent.json")).unwrap()).unwrap();
+        let rocky: Value =
+            serde_json::from_slice(&fs::read(dest.join("rocky/agent.json")).unwrap()).unwrap();
         assert!(rocky["animations"]["Idle(1)"].is_object());
         let _ = fs::remove_dir_all(&dest);
     }
 
     #[test]
     fn rejects_a_tampered_package() {
-        let err = install_from_bytes(b"not the real package", &std::env::temp_dir().join("chirp-x"), &|_, _| {}).unwrap_err();
+        let err = install_from_bytes(
+            b"not the real package",
+            &std::env::temp_dir().join("chirp-x"),
+            &|_, _| {},
+        )
+        .unwrap_err();
         assert!(err.contains("integrity"), "{err}");
     }
 
     #[test]
     fn path_segments_are_validated() {
         assert!(valid_segment("clippy") && valid_segment("agent.json") && valid_segment("3.mp3"));
-        assert!(!valid_segment("..") && !valid_segment("a/b") && !valid_segment("") && !valid_segment("x y"));
+        assert!(
+            !valid_segment("..")
+                && !valid_segment("a/b")
+                && !valid_segment("")
+                && !valid_segment("x y")
+        );
     }
 }

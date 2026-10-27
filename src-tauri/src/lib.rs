@@ -29,8 +29,12 @@ fn set_hit_regions(rects: Vec<Rect>, state: State<HitRegions>) {
 /// The bottom edge stays put where the platform lets us move windows (not on Wayland).
 #[tauri::command]
 fn fit_window(app: tauri::AppHandle, height: f64) {
-    let Some(win) = app.get_webview_window("main") else { return };
-    let (Ok(scale), Ok(size), Ok(pos)) = (win.scale_factor(), win.outer_size(), win.outer_position()) else {
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    let (Ok(scale), Ok(size), Ok(pos)) =
+        (win.scale_factor(), win.outer_size(), win.outer_position())
+    else {
         return;
     };
     let new_h = (height * scale).round().max(1.0) as u32;
@@ -38,10 +42,19 @@ fn fit_window(app: tauri::AppHandle, height: f64) {
         return;
     }
     let _ = win.set_size(tauri::PhysicalSize::new(size.width, new_h));
-    let _ = win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y + size.height as i32 - new_h as i32));
+    let _ = win.set_position(tauri::PhysicalPosition::new(
+        pos.x,
+        pos.y + size.height as i32 - new_h as i32,
+    ));
 }
 
-fn open_window(app: &tauri::AppHandle, label: &str, title: &str, w: f64, h: f64) -> Result<(), String> {
+fn open_window(
+    app: &tauri::AppHandle,
+    label: &str,
+    title: &str,
+    w: f64,
+    h: f64,
+) -> Result<(), String> {
     if let Some(win) = app.get_webview_window(label) {
         let _ = win.show();
         let _ = win.set_focus();
@@ -74,7 +87,9 @@ async fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 fn load_always_on_top(app: &tauri::AppHandle) -> bool {
-    prefs::get(app, "always_on_top").and_then(|v| v.as_bool()).unwrap_or(true)
+    prefs::get(app, "always_on_top")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
 }
 
 fn save_always_on_top(app: &tauri::AppHandle, value: bool) {
@@ -90,7 +105,14 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.set_always_on_top(on_top_pref);
     }
-    let on_top = CheckMenuItem::with_id(app, "on_top", "Stay on top", true, on_top_pref, None::<&str>)?;
+    let on_top = CheckMenuItem::with_id(
+        app,
+        "on_top",
+        "Stay on top",
+        true,
+        on_top_pref,
+        None::<&str>,
+    )?;
     let on_top_item = on_top.clone();
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Chirp", true, None::<&str>)?;
@@ -100,29 +122,30 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     let tray = TrayIconBuilder::new()
         .icon(icon)
         .icon_as_template(true)
-        .menu(&menu).on_menu_event(move |app, event| match event.id.as_ref() {
-        "toggle" => {
-            if let Some(w) = app.get_webview_window("main") {
-                if w.is_visible().unwrap_or(true) {
-                    let _ = w.hide();
-                } else {
-                    let _ = w.show();
+        .menu(&menu)
+        .on_menu_event(move |app, event| match event.id.as_ref() {
+            "toggle" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    if w.is_visible().unwrap_or(true) {
+                        let _ = w.hide();
+                    } else {
+                        let _ = w.show();
+                    }
                 }
             }
-        }
-        "on_top" => {
-            let on = on_top_item.is_checked().unwrap_or(true);
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.set_always_on_top(on);
+            "on_top" => {
+                let on = on_top_item.is_checked().unwrap_or(true);
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.set_always_on_top(on);
+                }
+                save_always_on_top(app, on);
             }
-            save_always_on_top(app, on);
-        }
-        "settings" => {
-            let _ = open_window(app, "settings", "Chirp Settings", 520.0, 640.0);
-        }
-        "quit" => app.exit(0),
-        _ => {}
-    });
+            "settings" => {
+                let _ = open_window(app, "settings", "Chirp Settings", 520.0, 640.0);
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        });
     let tray_icon = tray.build(app)?;
     app.manage(appicon::TrayHandle(Mutex::new(Some(tray_icon))));
     Ok(())
@@ -133,10 +156,14 @@ fn spawn_click_through_watcher(app: tauri::AppHandle) {
         let mut ignoring: Option<bool> = None;
         loop {
             std::thread::sleep(Duration::from_millis(30));
-            let Some(win) = app.get_webview_window("main") else { continue };
-            let (Ok(cursor), Ok(origin), Ok(scale)) =
-                (win.cursor_position(), win.outer_position(), win.scale_factor())
-            else {
+            let Some(win) = app.get_webview_window("main") else {
+                continue;
+            };
+            let (Ok(cursor), Ok(origin), Ok(scale)) = (
+                win.cursor_position(),
+                win.outer_position(),
+                win.scale_factor(),
+            ) else {
                 continue;
             };
             let cx = (cursor.x - origin.x as f64) / scale;
@@ -149,11 +176,10 @@ fn spawn_click_through_watcher(app: tauri::AppHandle) {
                 .iter()
                 .any(|r| cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h);
             let want_ignore = !inside;
-            if ignoring != Some(want_ignore) {
-                if win.set_ignore_cursor_events(want_ignore).is_ok() {
+            if ignoring != Some(want_ignore)
+                && win.set_ignore_cursor_events(want_ignore).is_ok() {
                     ignoring = Some(want_ignore);
                 }
-            }
         }
     });
 }
