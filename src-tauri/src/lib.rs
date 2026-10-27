@@ -21,6 +21,10 @@ struct Rect {
 struct HitRegions(Mutex<Vec<Rect>>);
 
 #[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri injects command state by value."
+)]
 fn set_hit_regions(rects: Vec<Rect>, state: State<HitRegions>) {
     *state.0.lock().unwrap() = rects;
 }
@@ -28,6 +32,15 @@ fn set_hit_regions(rects: Vec<Rect>, state: State<HitRegions>) {
 /// Shrink or grow the main window to its content so no transparent area is left above the bubble.
 /// The bottom edge stays put where the platform lets us move windows (not on Wayland).
 #[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri injects the app handle by value."
+)]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "The UI-derived physical size is clamped to the u32 range before conversion."
+)]
 fn fit_window(app: tauri::AppHandle, height: f64) {
     let Some(win) = app.get_webview_window("main") else {
         return;
@@ -37,14 +50,16 @@ fn fit_window(app: tauri::AppHandle, height: f64) {
     else {
         return;
     };
-    let new_h = (height * scale).round().max(1.0) as u32;
+    let new_h = (height * scale)
+        .round()
+        .clamp(1.0, f64::from(u32::MAX)) as u32;
     if new_h == size.height {
         return;
     }
     let _ = win.set_size(tauri::PhysicalSize::new(size.width, new_h));
     let _ = win.set_position(tauri::PhysicalPosition::new(
         pos.x,
-        pos.y + size.height as i32 - new_h as i32,
+        pos.y + size.height.cast_signed() - new_h.cast_signed(),
     ));
 }
 
@@ -166,8 +181,8 @@ fn spawn_click_through_watcher(app: tauri::AppHandle) {
             ) else {
                 continue;
             };
-            let cx = (cursor.x - origin.x as f64) / scale;
-            let cy = (cursor.y - origin.y as f64) / scale;
+            let cx = (cursor.x - f64::from(origin.x)) / scale;
+            let cy = (cursor.y - f64::from(origin.y)) / scale;
             let inside = app
                 .state::<HitRegions>()
                 .0
@@ -185,6 +200,10 @@ fn spawn_click_through_watcher(app: tauri::AppHandle) {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Starts the Tauri application.
+///
+/// # Panics
+/// Panics if Tauri cannot build the application configuration.
 pub fn run() {
     tauri::Builder::default()
         // Must come first: a second launch hands over to the running copy and exits.

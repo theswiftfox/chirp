@@ -64,21 +64,22 @@ pub fn apply(app: &AppHandle) {
     };
 
     if let Some(handle) = app.try_state::<TrayHandle>()
-        && let Some(icon) = handle.0.lock().unwrap().as_ref() {
-            // Linux has no template icons, so the monochrome paperclip would stay black.
-            #[cfg(target_os = "linux")]
-            let image = if template {
-                whiten(&tray)
-            } else {
-                tauri::image::Image::from_bytes(&tray).ok()
-            };
-            #[cfg(not(target_os = "linux"))]
-            let image = tauri::image::Image::from_bytes(&tray).ok();
-            if let Some(image) = image {
-                let _ = icon.set_icon(Some(image));
-                let _ = icon.set_icon_as_template(template);
-            }
+        && let Some(icon) = handle.0.lock().unwrap().as_ref()
+    {
+        // Linux has no template icons, so the monochrome paperclip would stay black.
+        #[cfg(target_os = "linux")]
+        let image = if template {
+            whiten(&tray)
+        } else {
+            tauri::image::Image::from_bytes(&tray).ok()
+        };
+        #[cfg(not(target_os = "linux"))]
+        let image = tauri::image::Image::from_bytes(&tray).ok();
+        if let Some(image) = image {
+            let _ = icon.set_icon(Some(image));
+            let _ = icon.set_icon_as_template(template);
         }
+    }
     #[cfg(target_os = "macos")]
     {
         let _ = app.run_on_main_thread(move || set_dock_icon(&dock));
@@ -165,11 +166,19 @@ fn status(app: &AppHandle) -> IconStatus {
 }
 
 #[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri commands receive owned IPC arguments."
+)]
 pub fn icon_status(app: AppHandle) -> IconStatus {
     status(&app)
 }
 
 #[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri commands receive owned IPC arguments."
+)]
 pub fn set_icon_style(app: AppHandle, style: String) -> Result<IconStatus, String> {
     match style.as_str() {
         "paperclip" => {}

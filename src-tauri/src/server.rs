@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::io::Read;
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
@@ -60,7 +61,7 @@ pub fn open_in_terminal(
         .clone()
         .ok_or("the OpenCode server is not running")?;
     let bin = resolve_opencode()?;
-    let bin_dir = bin.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let bin_dir = bin.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
     let terminal = terminal.map(str::trim).filter(|t| !t.is_empty());
 
     #[cfg(unix)]
@@ -158,8 +159,7 @@ fn is_executable(path: &std::path::Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
 
     std::fs::metadata(path)
-        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }
 
 /// Whether Linux has a terminal launcher available, either the XDG helper or an explicit override.
@@ -269,6 +269,10 @@ fn launch_terminal(script: &std::path::Path, terminal: Option<&str>) -> Result<(
 }
 
 #[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri commands deserialize IPC arguments as owned values."
+)]
 pub fn terminal_available_cmd(terminal: Option<String>) -> bool {
     terminal_available(terminal.as_deref())
 }
@@ -370,7 +374,12 @@ fn random_hex(bytes: usize) -> Result<String, String> {
     std::fs::File::open("/dev/urandom")
         .and_then(|mut f| f.read_exact(&mut buf))
         .map_err(|e| e.to_string())?;
-    Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
+    let mut hex = String::with_capacity(bytes.saturating_mul(2));
+    for byte in buf {
+        // Writing to a String is infallible.
+        let _ = write!(hex, "{byte:02x}");
+    }
+    Ok(hex)
 }
 
 /// Kill an opencode server left behind by a previous crashed run.

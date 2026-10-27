@@ -35,6 +35,11 @@ const NAMES: &[(&str, &str)] = &[
 #[derive(Serialize, Clone)]
 struct Progress {
     stage: &'static str,
+    #[serde(rename = "progress")]
+    #[expect(
+        clippy::struct_field_names,
+        reason = "The serialized progress field name is part of the frontend event API."
+    )]
     progress: f32,
     message: String,
 }
@@ -150,20 +155,24 @@ pub fn make_clippy_icons(char_dir: &Path, out_dir: &Path) -> Result<(), String> 
     let agent: Value =
         serde_json::from_slice(&fs::read(char_dir.join("agent.json")).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
-    let num = |v: &Value, d: u32| v.as_u64().map(|n| n as u32).unwrap_or(d);
-    let (w, h) = (
+    let num = |v: &Value, default: u32| {
+        v.as_u64()
+            .and_then(|number| u32::try_from(number).ok())
+            .unwrap_or(default)
+    };
+    let (frame_width, frame_height) = (
         num(&agent["framesize"][0], 124),
         num(&agent["framesize"][1], 93),
     );
-    let rest = &agent["animations"]["RestPose"]["frames"][0]["images"][0];
-    let (x, y) = (num(&rest[0], 0), num(&rest[1], 0));
+    let rest_pose = &agent["animations"]["RestPose"]["frames"][0]["images"][0];
+    let (rest_x, rest_y) = (num(&rest_pose[0], 0), num(&rest_pose[1], 0));
 
     let sheet = image::open(char_dir.join("map.png"))
         .map_err(|e| e.to_string())?
         .to_rgba8();
-    let frame = imageops::crop_imm(&sheet, x, y, w, h).to_image();
+    let frame = imageops::crop_imm(&sheet, rest_x, rest_y, frame_width, frame_height).to_image();
 
-    let (mut min_x, mut min_y, mut max_x, mut max_y) = (w, h, 0, 0);
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (frame_width, frame_height, 0, 0);
     for (px, py, p) in frame.enumerate_pixels() {
         if p[3] > 0 {
             min_x = min_x.min(px);
@@ -180,24 +189,35 @@ pub fn make_clippy_icons(char_dir: &Path, out_dir: &Path) -> Result<(), String> 
     // Resize with premultiplied alpha: the sprite's transparent pixels carry a colour key (magenta) that
     // would otherwise bleed into the edges as a halo.
     for p in still.pixels_mut() {
-        let a = p[3] as u32;
+        let alpha = u32::from(p[3]);
         for c in 0..3 {
-            p[c] = ((p[c] as u32 * a + 127) / 255) as u8;
+            let premultiplied = (u32::from(p[c]) * alpha + 127) / 255;
+            p[c] = u8::try_from(premultiplied).unwrap_or(u8::MAX);
         }
     }
 
     let fit = |canvas: u32, content: u32| -> RgbaImage {
-        let scale = content as f32 / still.width().max(still.height()) as f32;
-        let (nw, nh) = (
-            ((still.width() as f32 * scale).round() as u32).max(1),
-            ((still.height() as f32 * scale).round() as u32).max(1),
+        let max_dimension = still.width().max(still.height());
+        let resized_dimension = |dimension: u32| {
+            let numerator = u64::from(dimension) * u64::from(content);
+            let rounded = (numerator + u64::from(max_dimension) / 2) / u64::from(max_dimension);
+            u32::try_from(rounded).unwrap_or(u32::MAX).max(1)
+        };
+        let (new_width, new_height) = (
+            resized_dimension(still.width()),
+            resized_dimension(still.height()),
         );
-        let mut resized = imageops::resize(&still, nw, nh, imageops::FilterType::Lanczos3);
+        let mut resized = imageops::resize(
+            &still,
+            new_width,
+            new_height,
+            imageops::FilterType::Lanczos3,
+        );
         for p in resized.pixels_mut() {
-            let a = p[3] as u32;
+            let alpha = u32::from(p[3]);
             for c in 0..3 {
-                if let Some(value) = (p[c] as u32 * 255 + a / 2).checked_div(a) {
-                    p[c] = value.min(255) as u8;
+                if let Some(value) = (u32::from(p[c]) * 255 + alpha / 2).checked_div(alpha) {
+                    p[c] = u8::try_from(value.min(255)).unwrap_or(u8::MAX);
                 }
             }
         }
@@ -205,8 +225,8 @@ pub fn make_clippy_icons(char_dir: &Path, out_dir: &Path) -> Result<(), String> 
         imageops::overlay(
             &mut out,
             &resized,
-            ((canvas - nw) / 2) as i64,
-            ((canvas - nh) / 2) as i64,
+            i64::from((canvas - new_width) / 2),
+            i64::from((canvas - new_height) / 2),
         );
         out
     };
@@ -223,18 +243,19 @@ pub fn make_clippy_icons(char_dir: &Path, out_dir: &Path) -> Result<(), String> 
 
 fn download(progress: &dyn Fn(f32)) -> Result<Vec<u8>, String> {
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(180))
+        .timeout(Duration::from_mins(3))
         .build()
         .map_err(|e| e.to_string())?;
     let mut resp = client
         .get(PACKAGE_URL)
         .send()
-        .and_then(|r| r.error_for_status())
+        .and_then(reqwest::blocking::Response::error_for_status)
         .map_err(|e| format!("download failed: {e}"))?;
-    let total = resp.content_length().unwrap_or(0) as f32;
-    let mut buf = Vec::with_capacity(total as usize);
-    let mut chunk = [0u8; 64 * 1024];
+    let total = resp.content_length().filter(|&length| length > 0);
+    let mut buf = Vec::new();
+    let mut chunk = vec![0u8; 64 * 1024];
     let mut last = 0.0;
+    let mut downloaded = 0_u64;
     loop {
         let n = resp
             .read(&mut chunk)
@@ -243,8 +264,14 @@ fn download(progress: &dyn Fn(f32)) -> Result<Vec<u8>, String> {
             break;
         }
         buf.extend_from_slice(&chunk[..n]);
-        if total > 0.0 {
-            let p = buf.len() as f32 / total;
+        downloaded = downloaded.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
+        if let Some(total) = total {
+            let percent = downloaded
+                .saturating_mul(100)
+                .checked_div(total)
+                .unwrap_or(100)
+                .min(100);
+            let p = f32::from(u8::try_from(percent).unwrap_or(100)) / 100.0;
             if p - last >= 0.02 {
                 last = p;
                 progress(p);
@@ -302,7 +329,7 @@ pub fn install_from_bytes(
     fs::create_dir_all(dest).map_err(|e| e.to_string())?;
     let mut installed = Vec::new();
     for (i, id) in ids.iter().enumerate() {
-        progress(i as f32 / ids.len() as f32, format!("Installing {id}…"));
+        progress(progress_fraction(i, ids.len()), format!("Installing {id}…"));
         if !valid_segment(id) {
             continue;
         }
@@ -321,14 +348,25 @@ pub fn install_from_bytes(
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     fs::write(
         dest.join(".bundle.json"),
         json!({ "package": PACKAGE, "integrity": INTEGRITY, "ids": installed, "installed_at": now }).to_string(),
     )
     .map_err(|e| e.to_string())?;
     Ok(installed)
+}
+
+fn progress_fraction(completed: usize, total: usize) -> f32 {
+    if total == 0 {
+        return 0.0;
+    }
+    let basis_points = completed
+        .saturating_mul(10_000)
+        .checked_div(total)
+        .unwrap_or(10_000)
+        .min(10_000);
+    f32::from(u16::try_from(basis_points).unwrap_or(10_000)) / 10_000.0
 }
 
 fn write_character(
@@ -357,8 +395,7 @@ fn write_character(
     let name = NAMES
         .iter()
         .find(|(k, _)| *k == id)
-        .map(|(_, v)| *v)
-        .unwrap_or(id);
+        .map_or(id, |(_, v)| *v);
     let meta = json!({
         "id": id,
         "name": name,
@@ -405,9 +442,13 @@ fn normalize_numbers(v: &mut Value) {
     match v {
         Value::Number(n) => {
             if let Some(f) = n.as_f64()
-                && n.is_f64() && f.fract() == 0.0 && f.abs() < 9.0e15 {
-                    *v = json!(f as i64);
-                }
+                && n.is_f64()
+                && f.fract() == 0.0
+                && f.abs() < 9.0e15
+                && let Ok(integer) = f.to_string().parse::<i64>()
+            {
+                *v = json!(integer);
+            }
         }
         Value::Array(a) => a.iter_mut().for_each(normalize_numbers),
         Value::Object(o) => o.values_mut().for_each(normalize_numbers),
