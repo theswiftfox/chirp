@@ -78,7 +78,17 @@
     getCurrentWindow().startDragging();
   }
 
+  let fitted = 0;
+  function fitWindow() {
+    if (!bubbleEl || !clippyEl) return;
+    const h = Math.ceil(bubbleEl.offsetHeight + clippyEl.offsetHeight + 8);
+    if (h === fitted) return;
+    fitted = h;
+    invoke("fit_window", { height: h });
+  }
+
   function reportHitRegions() {
+    fitWindow();
     const rects = [bubbleEl, clippyEl].filter(Boolean).map((el) => {
       const r = el!.getBoundingClientRect();
       return { x: r.left, y: r.top, w: r.width, h: r.height };
@@ -181,7 +191,10 @@
       </div>
     {:else}
       {#if store.bubble.kind === "stream"}
-        <div class="title">{store.bubble.title}</div>
+        <div class="titlebar">
+          <div class="title">{store.bubble.title}</div>
+          <button class="icon" title="Show detailed activity" onclick={() => store.openHistory()}>^</button>
+        </div>
         <div class="feed" use:stick={feedSignal}>
           {#each store.bubble.feed ?? [] as item}
             {#if item.kind === "tool"}
@@ -200,6 +213,11 @@
       {#if store.bubble.kind === "ready"}
         <div class="buttons">
           <button onclick={() => invoke("open_inspect")}>Inspect</button>
+          <button onclick={() => store.openHistory()}>History</button>
+        </div>
+      {:else if store.bubble.kind === "text" && store.currentSessionId}
+        <div class="buttons">
+          <button onclick={() => store.openHistory()}>History</button>
         </div>
       {/if}
       {#if store.busy}
@@ -235,7 +253,7 @@
     height: 100vh;
     display: flex;
     flex-direction: column;
-    justify-content: flex-end;
+    justify-content: flex-start;
     align-items: center;
     gap: 8px;
   }
@@ -277,9 +295,15 @@
     font: 12px Tahoma, Verdana, sans-serif;
     padding: 0 6px;
   }
-  .title {
-    font-weight: bold;
+  .titlebar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     margin-bottom: 4px;
+  }
+  .title {
+    flex: 1;
+    font-weight: bold;
   }
   .feed {
     max-height: 96px;

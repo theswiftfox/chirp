@@ -5,6 +5,7 @@
   "windows": [
     "main",
     "inspect",
+    "history",
     "settings"
   ],
   "permissions": [

@@ -6,11 +6,13 @@ import {
   type AgentInfo,
   type PermissionDecision,
   type PermissionRule,
+  summarize,
   type ServerEvent,
   type SessionInfo,
 } from "./client";
 
 export const REPLY_KEY = "chirp.reply";
+export const HISTORY_KEY = "chirp.history";
 const BINDINGS_KEY = "chirp.sessions";
 
 interface Session {
@@ -60,13 +62,6 @@ export interface Bubble {
 }
 
 const WORKING_TITLE = "Let me think about that…";
-
-function summarize(input: unknown): string {
-  if (!input || typeof input !== "object") return "";
-  const o = input as Record<string, unknown>;
-  const v = o.command ?? o.path ?? o.filePath ?? o.pattern ?? o.url ?? o.query ?? Object.values(o).find((x) => typeof x === "string");
-  return typeof v === "string" ? v.replace(/\s+/g, " ").slice(0, 70) : "";
-}
 
 const SEARCH_TOOLS = /^(read|glob|grep|list|ls|find|search|webfetch|websearch|fetch)/i;
 const WRITE_TOOLS = /^(edit|write|patch|apply_patch|multiedit)/i;
@@ -224,7 +219,7 @@ export class OpenCodeStore {
       if (!reply) return;
       localStorage.setItem(
         REPLY_KEY,
-        JSON.stringify({ prompt, text: reply, project: basename(dir), time: Date.now() }),
+        JSON.stringify({ prompt, text: reply, project: basename(dir), time: Date.now(), sessionID: info.id, title: info.title }),
       );
       this.bubble =
         reply.length > st.longReplyChars
@@ -274,6 +269,17 @@ export class OpenCodeStore {
     } catch (err) {
       this.fail(String(err));
     }
+  }
+
+  /** Open the activity/conversation window for the current session. */
+  async openHistory() {
+    const id = this.currentSessionId;
+    if (!id) return;
+    localStorage.setItem(
+      HISTORY_KEY,
+      JSON.stringify({ sessionID: id, title: this.titles[id] ?? "Current chat", project: basename(settings.s.directory) }),
+    );
+    await invoke("open_history").catch((err) => this.fail(String(err)));
   }
 
   /** Open the terminal TUI attached to our server on the current session. */
@@ -468,7 +474,7 @@ export class OpenCodeStore {
     const text = s.lastText.trim();
     const project = this.projectOf(s.id);
     const other = project && project !== basename(settings.s.directory);
-    localStorage.setItem(REPLY_KEY, JSON.stringify({ prompt: s.lastPrompt, text, project, time: Date.now() }));
+    localStorage.setItem(REPLY_KEY, JSON.stringify({ prompt: s.lastPrompt, text, project, time: Date.now(), sessionID: s.id, title: this.titles[s.id] }));
     if (!text) this.bubble = { kind: "info", text: other ? `Finished in ${project}!` : "All done!" };
     else if (text.length > settings.s.longReplyChars) {
       this.bubble = { kind: "ready", text: other ? `The result for ${project} is ready!` : "The result is ready!" };

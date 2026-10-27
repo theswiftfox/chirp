@@ -25,6 +25,22 @@ fn set_hit_regions(rects: Vec<Rect>, state: State<HitRegions>) {
     *state.0.lock().unwrap() = rects;
 }
 
+/// Shrink or grow the main window to its content so no transparent area is left above the bubble.
+/// The bottom edge stays put where the platform lets us move windows (not on Wayland).
+#[tauri::command]
+fn fit_window(app: tauri::AppHandle, height: f64) {
+    let Some(win) = app.get_webview_window("main") else { return };
+    let (Ok(scale), Ok(size), Ok(pos)) = (win.scale_factor(), win.outer_size(), win.outer_position()) else {
+        return;
+    };
+    let new_h = (height * scale).round().max(1.0) as u32;
+    if new_h == size.height {
+        return;
+    }
+    let _ = win.set_size(tauri::PhysicalSize::new(size.width, new_h));
+    let _ = win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y + size.height as i32 - new_h as i32));
+}
+
 fn open_window(app: &tauri::AppHandle, label: &str, title: &str, w: f64, h: f64) -> Result<(), String> {
     if let Some(win) = app.get_webview_window(label) {
         let _ = win.show();
@@ -45,6 +61,11 @@ fn open_window(app: &tauri::AppHandle, label: &str, title: &str, w: f64, h: f64)
 #[tauri::command]
 async fn open_inspect(app: tauri::AppHandle) -> Result<(), String> {
     open_window(&app, "inspect", "Chirp", 640.0, 720.0)
+}
+
+#[tauri::command]
+async fn open_history(app: tauri::AppHandle) -> Result<(), String> {
+    open_window(&app, "history", "Chirp Activity", 560.0, 680.0)
 }
 
 #[tauri::command]
@@ -157,7 +178,7 @@ pub fn run() {
         ))
         .manage(HitRegions::default())
         .manage(server::ServerState::default())
-        .invoke_handler(tauri::generate_handler![set_hit_regions, open_inspect, open_settings, server::start_server, server::open_in_terminal_cmd,
+        .invoke_handler(tauri::generate_handler![set_hit_regions, fit_window, open_inspect, open_history, open_settings, server::start_server, server::open_in_terminal_cmd,
             characters::list_characters,
             characters::character_file,
             characters::install_clippy_bundle,

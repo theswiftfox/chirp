@@ -26,6 +26,21 @@ export interface AgentInfo {
   description: string;
 }
 
+export interface ConversationItem {
+  kind: "user" | "text" | "tool" | "thinking";
+  text: string;
+  state?: "run" | "ok" | "fail";
+}
+
+export function summarize(input: unknown): string {
+  if (!input || typeof input !== "object") return "";
+  const o = input as Record<string, unknown>;
+  const v = o.command ?? o.path ?? o.filePath ?? o.pattern ?? o.url ?? o.query ?? Object.values(o).find((x) => typeof x === "string");
+  return typeof v === "string" ? v.replace(/\s+/g, " ").slice(0, 70) : "";
+}
+
+const CONVERSATION_PAGE = 200;
+
 export type PermissionDecision = "once" | "always" | "reject";
 
 export class OpenCodeClient {
@@ -119,6 +134,39 @@ export class OpenCodeClient {
     const reply = msgs.filter((m) => m.type === "assistant").map(text).find(Boolean) ?? "";
     const prompt = msgs.find((m) => m.type === "user")?.text ?? "";
     return { prompt, reply };
+  }
+
+  /** One page of a conversation, flattened to prompts, replies and tool steps. Pass `cursor` for the page before it. */
+  async conversation(
+    sessionID: string,
+    cursor?: string,
+  ): Promise<{ items: ConversationItem[]; cursor: string; more: boolean }> {
+    const r = await this.req(
+      "GET",
+      `/api/session/${sessionID}/message?limit=${CONVERSATION_PAGE}&order=desc` + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""),
+    );
+    const msgs = ((r.data ?? []) as any[]).reverse();
+    const items: ConversationItem[] = [];
+    for (const m of msgs) {
+      if (m.type === "user") {
+        if (m.text) items.push({ kind: "user", text: m.text });
+      } else if (m.type === "assistant") {
+        for (const c of (m.content ?? []) as any[]) {
+          if (c.type === "text" && c.text?.trim()) items.push({ kind: "text", text: c.text });
+          else if (c.type === "reasoning") items.push({ kind: "thinking", text: "Thinking…" });
+          else if (c.type === "tool") {
+            const status = c.state?.status;
+            const detail = summarize(c.state?.input);
+            items.push({
+              kind: "tool",
+              text: detail ? `${c.name}: ${detail}` : String(c.name ?? "tool"),
+              state: status === "completed" ? "ok" : status === "error" || status === "failed" ? "fail" : "run",
+            });
+          }
+        }
+      }
+    }
+    return { items, cursor: r.cursor?.next ?? "", more: msgs.length >= CONVERSATION_PAGE && !!r.cursor?.next };
   }
 
   async listModels() {

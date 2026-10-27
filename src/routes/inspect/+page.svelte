@@ -2,13 +2,16 @@
   import { onMount } from "svelte";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
-  import { REPLY_KEY } from "$lib/opencode/store.svelte";
+  import { invoke } from "@tauri-apps/api/core";
+  import { HISTORY_KEY, REPLY_KEY } from "$lib/opencode/store.svelte";
 
   interface Reply {
     prompt: string;
     project?: string;
     text: string;
     time: number;
+    sessionID?: string;
+    title?: string;
   }
 
   let reply = $state<Reply | null>(null);
@@ -28,6 +31,15 @@
     setTimeout(() => (copied = false), 1200);
   }
 
+  async function history() {
+    if (!reply?.sessionID) return;
+    localStorage.setItem(
+      HISTORY_KEY,
+      JSON.stringify({ sessionID: reply.sessionID, title: reply.title ?? "Conversation", project: reply.project ?? "" }),
+    );
+    await invoke("open_history");
+  }
+
   onMount(() => {
     load();
     const onStorage = (e: StorageEvent) => e.key === REPLY_KEY && load();
@@ -42,6 +54,7 @@
   {#if reply}
     <header>
       <div class="prompt">{#if reply.project}<span class="project">{reply.project}</span>{/if}{reply.prompt}</div>
+      {#if reply.sessionID}<button onclick={history}>Full conversation</button>{/if}
       <button onclick={copy}>{copied ? "Copied!" : "Copy"}</button>
     </header>
     <article>{@html html}</article>
