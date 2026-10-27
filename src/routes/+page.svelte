@@ -13,6 +13,8 @@
   let clippyEl = $state<HTMLElement>();
   let anim = $state("");
   let draft = $state("");
+  let terminalAvailable = $state(true);
+  let terminalProbe = 0;
   type Picker = "project" | "session" | "agent" | null;
   let picker = $state<Picker>(null);
 
@@ -31,6 +33,27 @@
     };
   }
   const agentLabel = $derived(store.agents.find((a) => a.id === store.currentAgent)?.name ?? (store.currentAgent || "default"));
+  const handoverTitle = $derived(
+    !terminalAvailable
+      ? settings.s.terminalApp.trim()
+        ? `Terminal executable not found. Check Settings → General → Terminal app (${settings.s.terminalApp.trim()}).`
+        : "Install xdg-terminal-exec or set a terminal executable in Settings → General → Terminal app."
+      : store.canHandover
+        ? "Continue this session in the terminal"
+        : "Available between prompts, once a session exists",
+  );
+
+  $effect(() => {
+    const terminal = settings.s.terminalApp.trim() || null;
+    const probe = ++terminalProbe;
+    invoke<boolean>("terminal_available_cmd", { terminal })
+      .then((available) => {
+        if (probe === terminalProbe) terminalAvailable = available;
+      })
+      .catch(() => {
+        if (probe === terminalProbe) terminalAvailable = false;
+      });
+  });
 
   function toggle(which: Exclude<Picker, null>) {
     picker = picker === which ? null : which;
@@ -120,12 +143,14 @@
         📁 {basename(settings.s.directory)} ▾
       </button>
       <span class="spacer"></span>
-      <button
-        class="icon"
-        title={store.canHandover ? "Continue this session in the terminal" : "Available between prompts, once a session exists"}
-        disabled={!store.canHandover}
-        onclick={() => store.handover()}>⌨</button
-      >
+      <span class="terminal-control" title={handoverTitle}>
+        <button
+          class="icon"
+          title={handoverTitle}
+          disabled={!store.canHandover || !terminalAvailable}
+          onclick={() => store.handover()}>⌨</button
+        >
+      </span>
       <button class="icon" title="New session" onclick={() => store.newSession()}>↻</button>
       <button class="icon" title="Settings" onclick={() => invoke("open_settings")}>⚙</button>
     </div>
@@ -294,6 +319,9 @@
   .icon {
     font: 12px Tahoma, Verdana, sans-serif;
     padding: 0 6px;
+  }
+  .terminal-control {
+    display: inline-flex;
   }
   .titlebar {
     display: flex;

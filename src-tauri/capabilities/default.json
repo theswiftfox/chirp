@@ -20,7 +20,6 @@
         }
       ]
     },
-    "dialog:default",
-    "autostart:default"
+    "dialog:default"
   ]
 }

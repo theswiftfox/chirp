@@ -6,7 +6,7 @@ permission when the agent needs it, and lets you prompt it by typing into the bu
 
 > *"It looks like you're trying to refactor a module. Would you like help?"*
 
-Built with [Tauri](https://tauri.app) v2 and SvelteKit (Svelte 5). **macOS only.**
+Built with [Tauri](https://tauri.app) v2 and SvelteKit (Svelte 5). Runs on **macOS** and **Linux**. Tested on macOS 27, Fedora 44 with GNOME on Wayland. Windows as well as other Linux distributions and desktops are untested.
 
 ## Features
 
@@ -20,14 +20,15 @@ Built with [Tauri](https://tauri.app) v2 and SvelteKit (Svelte 5). **macOS only.
   defined in the selected project.
 - Hand a session over to your terminal between prompts. The terminal attaches to the same server, so both stay in
   sync.
-- Menu bar icon, launch at login, a built-in songbird and an optional download of the classic Office characters.
+- Menu bar icon, a built-in songbird and an optional download of the classic Office characters.
 
 ## Requirements
 
 | What | Version | Check |
 | --- | --- | --- |
 | macOS | 10.13 or newer (developed on a recent release) | |
-| Xcode command line tools | | `xcode-select -p` (install with `xcode-select --install`) |
+| Xcode command line tools (macOS) | | `xcode-select -p` (install with `xcode-select --install`) |
+| Linux | Tauri's [Linux prerequisites](https://v2.tauri.app/start/prerequisites/#linux) | |
 | [Node.js](https://nodejs.org) | 20.19+ or 22.12+ | `node -v` |
 | [Rust](https://rustup.rs) | 1.85+ (the crate uses edition 2024) | `rustc --version` |
 | [OpenCode](https://opencode.ai) | v2, connected to a model provider | `opencode --version` |
@@ -44,10 +45,10 @@ There are no prebuilt downloads: you build the app once from source.
 git clone https://github.com/theswiftfox/chirp.git
 cd chirp
 npm install
-npm run tauri build -- --bundles app
+npm run tauri build -- --bundles app # on linux use --bundles rpm for example
 ```
 
-The first build takes a few minutes (it compiles the Rust side in release mode). The app ends up at
+The first build takes a few minutes (it compiles the Rust side in release mode). On macOS the app ends up at
 `src-tauri/target/release/bundle/macos/Chirp.app`. Drag it to `/Applications` and open it:
 
 ```sh
@@ -57,7 +58,7 @@ open /Applications/Chirp.app
 
 Notes:
 
-- The app is only ad-hoc signed, not notarized. An app you build yourself opens normally. If you copy it to another
+- macOS: the app is only ad-hoc signed, not notarized. An app you build yourself opens normally. If you copy it to another
   Mac or download it, macOS may refuse to open it: right-click it and choose **Open**, or run
   `xattr -dr com.apple.quarantine /Applications/Chirp.app`.
 - To update, pull the repository and build again.
@@ -100,8 +101,11 @@ The **⌨** button opens your terminal on the current session with the OpenCode 
 Because both use the same server, they stay in sync: if you keep working in the terminal, Clippy shows the activity
 too, and you can answer permission requests from either side.
 
-- It uses whichever app macOS opens `.command` files with (Terminal unless you changed it). Pick or type another one under
+- macOS: it uses whichever app opens `.command` files (Terminal unless you changed it). Pick or type another one under
   **Settings → General → Terminal app** (for example iTerm, Ghostty, WezTerm or Warp).
+- Linux: it uses `xdg-terminal-exec` to open your desktop's preferred terminal. If that utility is unavailable, set a
+  terminal executable under **Settings → General → Terminal app**. The ⌨ button is disabled when neither is available.
+- Windows isn't supported yet.
 - Quitting Chirp stops the server, which disconnects a terminal attached to it.
 
 ## Settings
@@ -115,7 +119,6 @@ too, and you can answer permission requests from either side.
 | Mute | Silences the characters' sounds. |
 | Menu bar & Dock icon | A paperclip, or Clippy once the classic characters are installed. |
 | Terminal app | For the ⌨ button. |
-| Launch at login | Registers a launch agent for the app. Use it from the installed app, not from `tauri dev`. |
 | "Result is ready" length | Replies longer than this are shown as a result to inspect instead of in the bubble. |
 
 ## Characters
@@ -138,11 +141,11 @@ that contain them.
 
 | What | Where |
 | --- | --- |
-| Installed characters, generated icons, `prefs.json` (stay on top, icon style) | `~/Library/Application Support/com.theswiftfox.chirp/` |
-| Settings and remembered sessions | The app's web storage: `~/Library/WebKit/com.theswiftfox.chirp` for the installed app, `~/Library/WebKit/chirp` for `npm run tauri dev` |
+| Installed characters, generated icons, `prefs.json` (stay on top, icon style) | macOS: `~/Library/Application Support/com.theswiftfox.chirp/`. Linux: `~/.local/share/com.theswiftfox.chirp/` |
+| Settings and remembered sessions | The app's web storage. macOS: `~/Library/WebKit/com.theswiftfox.chirp` for the installed app, `~/Library/WebKit/chirp` for `npm run tauri dev`. Linux: `localstorage/` inside the folder above |
 | Your sessions and conversations | OpenCode's own storage, as usual. Chirp doesn't keep copies. |
 
-The installed app and the development build keep **separate settings**, so a fresh install starts with defaults.
+On macOS the installed app and the development build keep **separate settings**, so a fresh install starts with defaults.
 
 The OpenCode server Chirp starts only listens on `127.0.0.1`, on a random port, with a random password that is
 generated for each launch.
@@ -158,7 +161,12 @@ generated for each launch.
   classic characters.
 - **Start over.** Quit the app, then delete the two folders in the table above.
 
-To uninstall, turn off **Launch at login**, quit the app, delete `Chirp.app`, and delete the folders above.
+To uninstall, quit the app, delete `Chirp.app`, and delete the folders above.
+
+### Linux notes
+
+- For `npm run tauri dev`, run `npm run dev:desktop-entry` once so the dock shows the right icon (it installs a
+  dev `.desktop` entry; pass `--remove` to undo it).
 
 ## Development
 

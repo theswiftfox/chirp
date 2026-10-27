@@ -172,13 +172,17 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
-        ))
         .manage(HitRegions::default())
         .manage(server::ServerState::default())
-        .invoke_handler(tauri::generate_handler![set_hit_regions, fit_window, open_inspect, open_history, open_settings, server::start_server, server::open_in_terminal_cmd,
+        .invoke_handler(tauri::generate_handler![
+            set_hit_regions,
+            fit_window,
+            open_inspect,
+            open_history,
+            open_settings,
+            server::start_server,
+            server::open_in_terminal_cmd,
+            server::terminal_available_cmd,
             characters::list_characters,
             characters::character_file,
             characters::install_clippy_bundle,

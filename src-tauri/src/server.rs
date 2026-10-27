@@ -35,15 +35,13 @@ fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// Open the default terminal with the opencode TUI attached to our server, on the given session.
+/// Open a terminal with the opencode TUI attached to our server, on the given session.
 pub fn open_in_terminal(
     app: &AppHandle,
     directory: &str,
     session_id: &str,
     terminal: Option<&str>,
 ) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-
     if session_id.is_empty() || !session_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Err("invalid session id".into());
     }
@@ -59,41 +57,200 @@ pub fn open_in_terminal(
         .ok_or("the OpenCode server is not running")?;
     let bin = resolve_opencode()?;
     let bin_dir = bin.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let terminal = terminal.map(str::trim).filter(|t| !t.is_empty());
 
-    let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    // Scripts contain the server password: remove leftovers that never ran.
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for e in entries.flatten() {
-            if e.file_name().to_string_lossy().starts_with("handover-") {
-                let _ = std::fs::remove_file(e.path());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        // Scripts contain the server password: remove leftovers that never ran.
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for e in entries.flatten() {
+                if e.file_name().to_string_lossy().starts_with("handover-") {
+                    let _ = std::fs::remove_file(e.path());
+                }
             }
         }
+
+        let script = format!(
+            "#!{shell}\nrm -f -- \"$0\"\ncd {dir} || exit 1\nexport PATH={bin_dir}:\"$PATH\"\nexport OPENCODE_SERVER_PASSWORD={pw}\nexec {bin} --server {url} --session {sid}\n",
+            shell = if cfg!(target_os = "macos") { "/bin/zsh -l" } else { "/bin/sh" },
+            dir = sh_quote(directory),
+            bin_dir = sh_quote(&bin_dir.to_string_lossy()),
+            pw = sh_quote(&info.password),
+            bin = sh_quote(&bin.to_string_lossy()),
+            url = sh_quote(&info.url),
+            sid = sh_quote(session_id),
+        );
+        let ext = if cfg!(target_os = "macos") { "command" } else { "sh" };
+        let path = dir.join(format!("handover-{session_id}.{ext}"));
+        std::fs::write(&path, script).map_err(|e| e.to_string())?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+
+        let result = launch_terminal(&path, terminal);
+        if result.is_err() {
+            let _ = std::fs::remove_file(&path);
+        }
+        result
     }
+    #[cfg(not(unix))]
+    {
+        let _ = (directory, &info, &bin_dir, terminal);
+        Err("continuing in a terminal is not supported on this platform yet".into())
+    }
+}
 
-    let script = format!(
-        "#!/bin/zsh -l\nrm -f -- \"$0\"\ncd {dir} || exit 1\nexport PATH={bin_dir}:\"$PATH\"\nexport OPENCODE_SERVER_PASSWORD={pw}\nexec {bin} --server {url} --session {sid}\n",
-        dir = sh_quote(directory),
-        bin_dir = sh_quote(&bin_dir.to_string_lossy()),
-        pw = sh_quote(&info.password),
-        bin = sh_quote(&bin.to_string_lossy()),
-        url = sh_quote(&info.url),
-        sid = sh_quote(session_id),
-    );
-    let path = dir.join(format!("handover-{session_id}.command"));
-    std::fs::write(&path, script).map_err(|e| e.to_string())?;
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
-
+/// macOS: hand the `.command` script to the terminal app (or whatever opens `.command` files).
+#[cfg(target_os = "macos")]
+fn launch_terminal(script: &std::path::Path, terminal: Option<&str>) -> Result<(), String> {
     let mut cmd = Command::new("open");
-    if let Some(app_name) = terminal.map(str::trim).filter(|a| !a.is_empty()) {
+    if let Some(app_name) = terminal {
         cmd.args(["-a", app_name]);
     }
-    let status = cmd.arg(&path).status().map_err(|e| e.to_string())?;
-    if !status.success() {
-        let _ = std::fs::remove_file(&path);
-        return Err("could not open the terminal app".into());
+    let status = cmd.arg(script).status().map_err(|e| e.to_string())?;
+    if status.success() { Ok(()) } else { Err("could not open the terminal app".into()) }
+}
+
+/// How a terminal emulator wants the program to run: the arguments that go before the script.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn exec_args(terminal: &str) -> &'static [&'static str] {
+    match terminal {
+        "xdg-terminal-exec" | "kitty" | "foot" => &[],
+        "ptyxis" | "gnome-terminal" => &["--"],
+        "wezterm" => &["start", "--"],
+        "xfce4-terminal" => &["-x"],
+        _ => &["-e"],
     }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn find_in_path(name: &str) -> Option<PathBuf> {
+    if name.contains('/') {
+        let p = PathBuf::from(name);
+        return is_executable(&p).then_some(p);
+    }
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|d| d.join(name))
+        .find(|p| is_executable(p))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn is_executable(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+/// Whether Linux has a terminal launcher available, either the XDG helper or an explicit override.
+#[cfg(target_os = "linux")]
+fn terminal_available(terminal: Option<&str>) -> bool {
+    match terminal.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(name) => find_in_path(name).is_some() || find_in_path(&name.to_lowercase()).is_some(),
+        None => find_in_path("xdg-terminal-exec").is_some(),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn terminal_available(_terminal: Option<&str>) -> bool {
+    true
+}
+
+/// Linux: use the XDG default-terminal launcher unless the user explicitly chose a terminal.
+#[cfg(target_os = "linux")]
+fn launch_terminal(script: &std::path::Path, terminal: Option<&str>) -> Result<(), String> {
+    let bin = if let Some(name) = terminal {
+        let lower = name.to_lowercase();
+        // A configured name may differ in case from the binary ("Ghostty" vs "ghostty").
+        find_in_path(name)
+            .or_else(|| find_in_path(&lower))
+            .ok_or_else(|| format!("could not find the terminal \"{name}\" on PATH"))?
+    } else {
+        find_in_path("xdg-terminal-exec").ok_or_else(|| {
+            "xdg-terminal-exec is unavailable. Set a terminal executable under Settings → General → Terminal app".to_string()
+        })?
+    };
+
+    let mut cmd = Command::new(&bin);
+    if terminal.is_some() {
+        let base = bin
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        cmd.args(exec_args(&base));
+    }
+    let mut child = cmd
+        .arg(script)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("could not start {}: {e}", bin.display()))?;
+    // Some terminals stay in the foreground until closed: reap them off-thread.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
     Ok(())
+}
+
+/// Other Unix platforms retain the terminal discovery fallback.
+#[cfg(all(unix, not(target_os = "macos"), not(target_os = "linux")))]
+fn launch_terminal(script: &std::path::Path, terminal: Option<&str>) -> Result<(), String> {
+    let mut candidates: Vec<String> = Vec::new();
+    if let Some(t) = terminal {
+        candidates.push(t.to_string());
+    } else {
+        if let Some(t) = std::env::var("TERMINAL").ok().filter(|t| !t.trim().is_empty()) {
+            candidates.push(t);
+        }
+        candidates.extend(
+            [
+                "x-terminal-emulator",
+                "gnome-terminal",
+                "ptyxis",
+                "konsole",
+                "kitty",
+                "ghostty",
+                "alacritty",
+                "wezterm",
+                "foot",
+                "xfce4-terminal",
+                "xterm",
+            ]
+            .map(String::from),
+        );
+    }
+    for name in candidates {
+        let lower = name.to_lowercase();
+        let Some(bin) = find_in_path(&name).or_else(|| find_in_path(&lower)) else {
+            continue;
+        };
+        let base = bin
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or(lower);
+        let mut child = Command::new(&bin)
+            .args(exec_args(&base))
+            .arg(script)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("could not start {}: {e}", bin.display()))?;
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        return Ok(());
+    }
+    Err("could not find a terminal; set one under Settings → Terminal app".into())
+}
+
+#[tauri::command]
+pub fn terminal_available_cmd(terminal: Option<String>) -> bool {
+    terminal_available(terminal.as_deref())
 }
 
 #[tauri::command]

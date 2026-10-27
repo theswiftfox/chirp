@@ -4,7 +4,6 @@
   import { listen } from "@tauri-apps/api/event";
   import { ask, open } from "@tauri-apps/plugin-dialog";
   import { listCharacters, sheetUrlFor, DEFAULT_CHARACTER, type CharacterInfo } from "$lib/clippy/characters";
-  import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
   import { OpenCodeClient } from "$lib/opencode/client";
   import { basename, initSettings, settings, type PermissionMode } from "$lib/settings.svelte";
 
@@ -100,7 +99,6 @@
 
   let models = $state<{ id: string; providerID: string; name?: string }[]>([]);
   let modelError = $state("");
-  let autostart = $state(false);
 
   const byProvider = $derived.by(() => {
     const groups: Record<string, typeof models> = {};
@@ -120,18 +118,8 @@
     if (typeof dir === "string") settings.addProject(dir);
   }
 
-  async function toggleAutostart(on: boolean) {
-    try {
-      if (on) await enable();
-      else await disable();
-    } finally {
-      autostart = await isEnabled();
-    }
-  }
-
   onMount(async () => {
     initSettings();
-    isEnabled().then((v) => (autostart = v));
     refreshIcon().catch((err) => console.warn("could not read the icon style", err));
     refreshCharacters().catch((err) => console.warn("could not load characters", err));
     try {
@@ -263,7 +251,7 @@
       Terminal app for "continue in terminal"
       <input
         list="terminals"
-        placeholder="System default (Terminal unless you changed it)"
+        placeholder="Automatic"
         value={settings.s.terminalApp}
         onchange={(e) => settings.update({ terminalApp: e.currentTarget.value.trim() })}
       />
@@ -273,11 +261,12 @@
         <option value="Ghostty"></option>
         <option value="WezTerm"></option>
         <option value="Warp"></option>
+        <option value="kitty"></option>
+        <option value="ptyxis"></option>
+        <option value="gnome-terminal"></option>
+        <option value="konsole"></option>
+        <option value="alacritty"></option>
       </datalist>
-    </label>
-    <label class="check">
-      <input type="checkbox" checked={autostart} onchange={(e) => toggleAutostart(e.currentTarget.checked)} />
-      Launch at login
     </label>
     <label class="check">
       Show "result is ready" for replies longer than

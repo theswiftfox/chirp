@@ -18,7 +18,7 @@ export interface Settings {
   character: string;
   /** Bumped when characters are installed or removed, so open windows reload them. */
   characterRevision: number;
-  /** App used for "continue in terminal"; empty = the system default for .command files. */
+  /** App used for "continue in terminal"; empty uses the platform's default when available. */
   terminalApp: string;
   muted: boolean;
   longReplyChars: number;
